@@ -17,6 +17,8 @@ const OID_SUBJECT_KEY_IDENTIFIER: &[u64] = &[2, 5, 29, 14];
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_user_is_not_verified_if_their_msk_is_not_signed() -> anyhow::Result<()> {
+    set_up_default_crypto_provider();
+
     let alice_span = tracing::info_span!("alice");
     let bob_span = tracing::info_span!("bob");
 
@@ -45,6 +47,8 @@ async fn test_user_is_not_verified_if_their_msk_is_not_signed() -> anyhow::Resul
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_user_is_verified_if_their_msk_is_signed() -> anyhow::Result<()> {
+    set_up_default_crypto_provider();
+
     let alice_span = tracing::info_span!("alice");
     let bob_span = tracing::info_span!("bob");
 
@@ -94,6 +98,8 @@ async fn test_user_is_verified_if_their_msk_is_signed() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_user_is_not_verified_if_we_dont_trust_their_cert() -> anyhow::Result<()> {
+    set_up_default_crypto_provider();
+
     let alice_span = tracing::info_span!("alice");
     let bob_span = tracing::info_span!("bob");
 
@@ -263,4 +269,9 @@ pub(crate) fn subject_key_identifier_extension(
     let ski_der = [&[0x04, ski_bytes.len() as u8], ski_bytes].concat();
 
     CustomExtension::from_oid_content(OID_SUBJECT_KEY_IDENTIFIER, ski_der)
+}
+
+fn set_up_default_crypto_provider() {
+    // Ignore errors: they just mean that this method was called before.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
