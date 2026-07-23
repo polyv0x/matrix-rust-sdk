@@ -753,7 +753,7 @@ impl<'a, 'o> TimelineEventHandler<'a, 'o> {
             kind: edit_kind,
             edit_json: self.ctx.flow.raw_event().cloned(),
             encryption_info,
-            bundled_item_owner: None,
+            timestamp: self.ctx.timestamp,
         }));
 
         self.meta.aggregations.add(target.clone(), aggregation.clone());
@@ -1052,7 +1052,6 @@ impl<'a, 'o> TimelineEventHandler<'a, 'o> {
             &self.ctx.flow.timeline_item_id(),
             &self.ctx.sender,
             &mut cowed,
-            self.items,
             &self.meta.room_version_rules,
         ) {
             warn!("discarding aggregations: {err}");

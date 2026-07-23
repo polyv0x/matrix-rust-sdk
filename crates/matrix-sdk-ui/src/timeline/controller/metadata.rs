@@ -408,7 +408,7 @@ impl TimelineMetadata {
                 // Record the bundled edit in the aggregations set, if any.
                 if let Some(ctx) = remote_ctx {
                     // Extract a potentially bundled edit.
-                    if let Some((edit_event_id, new_content)) =
+                    if let Some((edit_event_id, edit_timestamp, new_content)) =
                         extract_poll_edit_content(ctx.relations)
                     {
                         let edit_json = extract_bundled_edit_event_json(ctx.raw_event);
@@ -419,9 +419,9 @@ impl TimelineMetadata {
                                     ctx.event_id.to_owned(),
                                     new_content,
                                 )),
+                                timestamp: edit_timestamp,
                                 edit_json,
                                 encryption_info: ctx.bundled_edit_encryption_info,
-                                bundled_item_owner: Some(ctx.event_id.to_owned()),
                             }),
                         );
                         self.aggregations.add(
@@ -446,7 +446,7 @@ impl TimelineMetadata {
                 // Record the bundled edit in the aggregations set, if any.
                 if let Some(ctx) = remote_ctx {
                     // Extract a potentially bundled edit.
-                    if let Some((edit_event_id, new_content)) =
+                    if let Some((edit_event_id, edit_timestamp, new_content)) =
                         extract_room_msg_edit_content(ctx.relations)
                     {
                         let edit_json = extract_bundled_edit_event_json(ctx.raw_event);
@@ -457,9 +457,9 @@ impl TimelineMetadata {
                                     ctx.event_id.to_owned(),
                                     new_content,
                                 )),
+                                timestamp: edit_timestamp,
                                 edit_json,
                                 encryption_info: ctx.bundled_edit_encryption_info,
-                                bundled_item_owner: Some(ctx.event_id.to_owned()),
                             }),
                         );
                         self.aggregations.add(

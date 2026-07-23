@@ -84,15 +84,14 @@ pub(in crate::timeline) struct PendingEdit {
     /// The kind of edit this is.
     pub kind: PendingEditKind,
 
+    /// The event's `origin_server_ts` field (or creation time for a local echo).
+    pub timestamp: MilliSecondsSinceUnixEpoch,
+
     /// The raw JSON for the edit.
     pub edit_json: Option<Raw<AnySyncTimelineEvent>>,
 
     /// The encryption info for this edit.
     pub encryption_info: Option<Arc<EncryptionInfo>>,
-
-    /// If provided, this is the identifier of a remote event item that included
-    /// this bundled edit.
-    pub bundled_item_owner: Option<OwnedEventId>,
 }
 
 /// Which kind of aggregation (related event) is this?
@@ -735,7 +734,7 @@ impl Aggregations {
                     let resolved = self
                         .related_events
                         .get(found)
-                        .is_some_and(|aggregations| resolve_edits(aggregations, items, &mut cowed));
+                        .is_some_and(|aggregations| resolve_edits(aggregations, &mut cowed));
                     // Otherwise nothing is pending anymore.
                     // TODO likely need to change the item to indicate
                     // it's been un-edited etc.
@@ -774,7 +773,6 @@ impl Aggregations {
         item_id: &TimelineEventItemId,
         sender: &OwnedUserId,
         event: &mut Cow<'_, EventTimelineItem>,
-        items: &mut ObservableItemsTransaction<'_>,
         rules: &RoomVersionRules,
     ) -> Result<(), AggregationError> {
         // If a beacon-stop arrived before this live start item, it was stashed
@@ -808,7 +806,7 @@ impl Aggregations {
         }
 
         if has_edits {
-            resolve_edits(aggregations, items, event);
+            resolve_edits(aggregations, event);
         }
 
         Ok(())
@@ -942,17 +940,13 @@ impl Aggregations {
 /// found.
 ///
 /// Returns true if an edit was found and applied, false otherwise.
-fn resolve_edits(
-    aggregations: &[Aggregation],
-    items: &ObservableItemsTransaction<'_>,
-    event: &mut Cow<'_, EventTimelineItem>,
-) -> bool {
+fn resolve_edits(aggregations: &[Aggregation], event: &mut Cow<'_, EventTimelineItem>) -> bool {
     // A tuple of the best edit, if we have found one and a boolean indicating if
     // the edit is coming from a local echo. If it's from a local echo, we can't
     // validate it as we don't have a raw JSON, but this isn't that important as
     // we're sure we won't send ourselves invalid edits.
     let mut best_edit: Option<(PendingEdit, bool)> = None;
-    let mut best_edit_pos = None;
+    let mut best_edit_key = None;
 
     for a in aggregations {
         if let AggregationKind::Edit(pending_edit) = &a.kind {
@@ -971,38 +965,17 @@ fn resolve_edits(
                 }
 
                 TimelineEventItemId::EventId(event_id) => {
-                    if let Some(best_edit_pos) = &mut best_edit_pos {
-                        // Find the position of the timeline owning the edit: either the bundled
-                        // item owner if this was a bundled edit, or the edit event itself.
-                        let pos = items.position_by_event_id(
-                            pending_edit.bundled_item_owner.as_ref().unwrap_or(event_id),
-                        );
+                    let edit_key = (pending_edit.timestamp, event_id.clone());
 
-                        if let Some(pos) = pos {
-                            // If the edit is more recent (higher index) than the previous best
-                            // edit we knew about, use this one.
-                            if pos > *best_edit_pos {
-                                best_edit = Some((pending_edit.clone(), false));
-                                *best_edit_pos = pos;
-                                trace!(?best_edit_pos, edit_id = ?a.own_id, "found better edit");
-                            }
-                        } else {
-                            trace!(edit_id = ?a.own_id, "couldn't find timeline meta for edit event");
-
-                            // The edit event isn't in the timeline, so it might be a bundled
-                            // edit. In this case, record it as the best edit if and only if
-                            // there wasn't any other.
-                            if best_edit.is_none() {
-                                best_edit = Some((pending_edit.clone(), false));
-                                trace!(?best_edit_pos, edit_id = ?a.own_id, "found bundled edit");
-                            }
-                        }
-                    } else {
-                        // There wasn't any best edit yet, so record this one as being it, with
-                        // its position.
+                    // Remote edits may be received or inserted out of order, especially when a
+                    // focused timeline combines a target's bundled relations with context events.
+                    // Select the latest edit using stable event metadata instead of its current
+                    // position in the timeline slice.
+                    if best_edit_key.as_ref().is_none_or(|best_edit_key| &edit_key > best_edit_key)
+                    {
                         best_edit = Some((pending_edit.clone(), false));
-                        best_edit_pos = items.position_by_event_id(event_id);
-                        trace!(?best_edit_pos, edit_id = ?a.own_id, "first best edit");
+                        best_edit_key = Some(edit_key);
+                        trace!(?best_edit_key, edit_id = ?a.own_id, "found better edit");
                     }
                 }
             }
@@ -1070,7 +1043,7 @@ fn edit_item(
         return false;
     };
 
-    let PendingEdit { kind: edit_kind, edit_json, encryption_info, bundled_item_owner: _ } = edit;
+    let PendingEdit { kind: edit_kind, timestamp: _, edit_json, encryption_info } = edit;
 
     match (edit_kind, content) {
         (
@@ -1180,7 +1153,7 @@ pub(crate) fn find_item_and_apply_aggregation(
         }
         ApplyAggregationResult::Edit => {
             if let Some(aggregations) = aggregations.related_events.get(target)
-                && resolve_edits(aggregations, items, &mut cowed)
+                && resolve_edits(aggregations, &mut cowed)
             {
                 let new_event_item = cowed.into_owned();
                 let new_item =
