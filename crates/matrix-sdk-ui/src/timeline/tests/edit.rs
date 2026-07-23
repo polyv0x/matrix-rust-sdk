@@ -244,18 +244,26 @@ async fn test_relations_edit_overrides_pending_edit_msg() {
             f.text_msg("*edit 1")
                 .sender(*ALICE)
                 .edit(original_event_id, MessageType::text_plain("edit 1").into())
-                .event_id(edit1_event_id),
+                .event_id(edit1_event_id)
+                .server_ts(2),
         )
         .await;
     assert_pending!(stream);
 
     // Now we receive the original event, with a bundled relations group.
-    let ev = f.text_msg("original").sender(*ALICE).event_id(original_event_id).with_bundled_edit(
-        f.text_msg("* edit 2")
-            .edit(original_event_id, MessageType::text_plain("edit 2").into())
-            .event_id(edit2_event_id)
-            .sender(*ALICE),
-    );
+    // Both edits have the same timestamp, so their event IDs provide the stable tie-breaker.
+    let ev = f
+        .text_msg("original")
+        .sender(*ALICE)
+        .event_id(original_event_id)
+        .server_ts(1)
+        .with_bundled_edit(
+            f.text_msg("* edit 2")
+                .edit(original_event_id, MessageType::text_plain("edit 2").into())
+                .event_id(edit2_event_id)
+                .sender(*ALICE)
+                .server_ts(2),
+        );
 
     timeline.handle_live_event(ev).await;
 
@@ -280,6 +288,62 @@ async fn test_relations_edit_overrides_pending_edit_msg() {
     assert!(date_divider.is_date_divider());
 
     assert_pending!(stream);
+}
+
+#[async_test]
+async fn test_bundled_edit_is_not_overridden_by_an_older_later_inserted_edit() {
+    let timeline = TestTimeline::new().await;
+    let f = &timeline.factory;
+
+    let original_event_id = event_id!("$original");
+    let older_edit_event_id = event_id!("$older_edit");
+    let bundled_edit_event_id = event_id!("$bundled_edit");
+
+    // A focused timeline can receive the target, including its latest bundled edit, before an
+    // older standalone edit that appears later in the context response.
+    timeline
+        .handle_live_event(
+            f.text_msg("original")
+                .sender(*ALICE)
+                .event_id(original_event_id)
+                .server_ts(1)
+                .with_bundled_edit(
+                    f.text_msg("* current")
+                        .edit(original_event_id, MessageType::text_plain("current").into())
+                        .event_id(bundled_edit_event_id)
+                        .sender(*ALICE)
+                        .server_ts(3),
+                ),
+        )
+        .await;
+
+    timeline
+        .handle_live_event(
+            f.text_msg("* stale")
+                .edit(original_event_id, MessageType::text_plain("stale").into())
+                .event_id(older_edit_event_id)
+                .sender(*ALICE)
+                .server_ts(2),
+        )
+        .await;
+
+    let items = timeline.controller.items().await;
+    let event = items
+        .iter()
+        .filter_map(|item| item.as_event())
+        .find(|event| event.event_id() == Some(original_event_id))
+        .expect("the original event should remain in the timeline");
+
+    assert_eq!(
+        event
+            .latest_edit_json()
+            .expect("we should have an edit json")
+            .deserialize()
+            .unwrap()
+            .event_id(),
+        bundled_edit_event_id
+    );
+    assert_eq!(event.content().as_message().unwrap().body(), "current");
 }
 
 #[async_test]

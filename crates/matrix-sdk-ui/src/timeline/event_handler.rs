@@ -727,15 +727,17 @@ impl<'a, 'o> TimelineEventHandler<'a, 'o> {
     fn handle_edit(&mut self, edited_event_id: OwnedEventId, edit_kind: PendingEditKind) {
         let target = TimelineEventItemId::EventId(edited_event_id.clone());
 
-        let encryption_info =
-            as_variant!(&self.ctx.flow, Flow::Remote { encryption_info, .. } => encryption_info.clone()).flatten();
         let aggregation = Aggregation::new(
             self.ctx.flow.timeline_item_id(),
             AggregationKind::Edit(PendingEdit {
                 kind: edit_kind,
+                timestamp: self.ctx.timestamp,
                 edit_json: self.ctx.flow.raw_event().cloned(),
-                encryption_info,
-                bundled_item_owner: None,
+                encryption_info: as_variant!(
+                    &self.ctx.flow,
+                    Flow::Remote { encryption_info, .. } => encryption_info.clone()
+                )
+                .flatten(),
             }),
         );
 
@@ -1066,7 +1068,6 @@ impl<'a, 'o> TimelineEventHandler<'a, 'o> {
             &self.ctx.flow.timeline_item_id(),
             &self.ctx.sender,
             &mut cowed,
-            self.items,
             &self.meta.room_version_rules,
         ) {
             warn!("discarding aggregations: {err}");
