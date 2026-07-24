@@ -43,7 +43,7 @@ use crate::{
     timeline::{
         InReplyToDetails, TimelineEventItemId,
         event_item::{
-            extract_bundled_edit_event_json, extract_poll_edit_content,
+            RemoteEventOrigin, extract_bundled_edit_event_json, extract_poll_edit_content,
             extract_room_msg_edit_content,
         },
     },
@@ -55,6 +55,7 @@ use crate::{
 pub(crate) struct RemoteEventContext<'a> {
     pub event_id: &'a EventId,
     pub raw_event: &'a Raw<AnySyncTimelineEvent>,
+    pub origin: RemoteEventOrigin,
     pub relations: BundledMessageLikeRelations<AnySyncMessageLikeEvent>,
     pub bundled_edit_encryption_info: Option<Arc<EncryptionInfo>>,
 }
@@ -350,6 +351,7 @@ impl TimelineMetadata {
         &mut self,
         event: &AnySyncTimelineEvent,
         raw_event: &Raw<AnySyncTimelineEvent>,
+        origin: RemoteEventOrigin,
         bundled_edit_encryption_info: Option<Arc<EncryptionInfo>>,
         timeline_items: &Vector<Arc<TimelineItem>>,
         is_thread_focus: bool,
@@ -360,6 +362,7 @@ impl TimelineMetadata {
             let remote_ctx = Some(RemoteEventContext {
                 event_id: ev.event_id(),
                 raw_event,
+                origin,
                 relations: ev.relations(),
                 bundled_edit_encryption_info,
             });
@@ -420,6 +423,7 @@ impl TimelineMetadata {
                                     new_content,
                                 )),
                                 timestamp: edit_timestamp,
+                                origin: Some(ctx.origin),
                                 edit_json,
                                 encryption_info: ctx.bundled_edit_encryption_info,
                             }),
@@ -458,6 +462,7 @@ impl TimelineMetadata {
                                     new_content,
                                 )),
                                 timestamp: edit_timestamp,
+                                origin: Some(ctx.origin),
                                 edit_json,
                                 encryption_info: ctx.bundled_edit_encryption_info,
                             }),
