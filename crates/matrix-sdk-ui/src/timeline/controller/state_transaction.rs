@@ -742,6 +742,16 @@ impl<'a, P: RoomDataProvider> TimelineStateTransaction<'a, P> {
             TimelineEventKind::UnableToDecrypt { utd_info, event } => (event, Some(utd_info)),
             _ => (event.kind.into_raw(), None),
         };
+        let origin = match position {
+            TimelineItemPosition::End { origin }
+            | TimelineItemPosition::Start { origin }
+            | TimelineItemPosition::At { origin, .. } => origin,
+            TimelineItemPosition::UpdateAt { timeline_item_index } => self
+                .items
+                .get(timeline_item_index)
+                .and_then(|item| item.as_event()?.as_remote())
+                .map_or(RemoteEventOrigin::Unknown, |item| item.origin),
+        };
 
         let (
             event_id,
@@ -758,6 +768,7 @@ impl<'a, P: RoomDataProvider> TimelineStateTransaction<'a, P> {
                 let (in_reply_to, thread_root) = self.meta.process_event_relations(
                     &event,
                     &raw,
+                    origin,
                     bundled_edit_encryption_info,
                     &self.items,
                     self.focus.is_thread(),

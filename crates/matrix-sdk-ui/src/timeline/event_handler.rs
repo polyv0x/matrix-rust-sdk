@@ -746,6 +746,24 @@ impl<'a, 'o> TimelineEventHandler<'a, 'o> {
     #[instrument(skip(self, edit_kind))]
     fn handle_edit(&mut self, edited_event_id: OwnedEventId, edit_kind: PendingEditKind) {
         let target = TimelineEventItemId::EventId(edited_event_id.clone());
+        let origin = match &self.ctx.flow {
+            Flow::Local { .. } => None,
+            Flow::Remote {
+                position:
+                    TimelineItemPosition::Start { origin }
+                    | TimelineItemPosition::End { origin }
+                    | TimelineItemPosition::At { origin, .. },
+                ..
+            } => Some(*origin),
+            Flow::Remote {
+                position: TimelineItemPosition::UpdateAt { timeline_item_index },
+                ..
+            } => self
+                .items
+                .get(*timeline_item_index)
+                .and_then(|item| item.as_event()?.as_remote())
+                .map(|event| event.origin),
+        };
 
         let encryption_info =
             as_variant!(&self.ctx.flow, Flow::Remote { encryption_info, .. } => encryption_info.clone()).flatten();
@@ -754,6 +772,7 @@ impl<'a, 'o> TimelineEventHandler<'a, 'o> {
             edit_json: self.ctx.flow.raw_event().cloned(),
             encryption_info,
             timestamp: self.ctx.timestamp,
+            origin,
         }));
 
         self.meta.aggregations.add(target.clone(), aggregation.clone());

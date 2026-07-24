@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use imbl::Vector;
-use matrix_sdk::deserialized_responses::TimelineEvent;
+use matrix_sdk::{check_validity_of_replacement_events, deserialized_responses::TimelineEvent};
 use ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId};
 use tracing::{debug, instrument, warn};
 
@@ -87,6 +87,86 @@ impl EmbeddedEvent {
             sender_profile: timeline_item.sender_profile.clone(),
             timestamp: timeline_item.timestamp,
             identifier: timeline_item.identifier(),
+        }
+    }
+
+    pub(in crate::timeline) async fn try_from_timeline_event_with_relations<P: RoomDataProvider>(
+        timeline_event: TimelineEvent,
+        relations: Vec<TimelineEvent>,
+        room_data_provider: &P,
+        meta: &TimelineMetadata,
+    ) -> Result<Option<Self>, TimelineError> {
+        let original_json = timeline_event.raw().clone();
+        let original_encryption_info = timeline_event.encryption_info().cloned();
+        let mut embedded =
+            Self::try_from_timeline_event(timeline_event, room_data_provider, meta).await?;
+
+        let latest_edit = relations
+            .into_iter()
+            .filter_map(|event| {
+                let timestamp = event.timestamp?;
+                let event_id = event.event_id()?.to_owned();
+                Some(((timestamp, event_id), event))
+            })
+            .max_by(|(left, _), (right, _)| left.cmp(right))
+            .map(|(_, event)| event);
+
+        let Some(latest_edit) = latest_edit else {
+            return Ok(embedded);
+        };
+
+        if let Err(error) = check_validity_of_replacement_events(
+            &original_json,
+            original_encryption_info.as_deref(),
+            latest_edit.raw(),
+            latest_edit.encryption_info().map(AsRef::as_ref),
+        ) {
+            warn!("ignoring invalid edit of embedded event: {error}");
+            return Ok(embedded);
+        }
+
+        let Some(replacement) =
+            Self::try_from_timeline_event(latest_edit, room_data_provider, meta).await?
+        else {
+            return Ok(embedded);
+        };
+        if let Some(embedded) = embedded.as_mut() {
+            embedded.apply_edit(replacement.content);
+        }
+
+        Ok(embedded)
+    }
+
+    fn apply_edit(&mut self, replacement: TimelineItemContent) {
+        match (&mut self.content, replacement) {
+            (
+                TimelineItemContent::MsgLike(MsgLikeContent {
+                    kind: MsgLikeKind::Message(message),
+                    ..
+                }),
+                TimelineItemContent::MsgLike(MsgLikeContent {
+                    kind: MsgLikeKind::Message(replacement),
+                    ..
+                }),
+            ) => {
+                message.msgtype = replacement.msgtype;
+                message.mentions = replacement.mentions;
+                message.edited = true;
+            }
+            (
+                TimelineItemContent::MsgLike(MsgLikeContent {
+                    kind: MsgLikeKind::Poll(poll), ..
+                }),
+                TimelineItemContent::MsgLike(MsgLikeContent {
+                    kind: MsgLikeKind::Poll(replacement),
+                    ..
+                }),
+            ) => {
+                poll.poll_start = replacement.poll_start;
+                poll.fallback_text = replacement.fallback_text;
+                poll.has_been_edited = true;
+            }
+            _ => warn!("replacement content does not match embedded event"),
         }
     }
 

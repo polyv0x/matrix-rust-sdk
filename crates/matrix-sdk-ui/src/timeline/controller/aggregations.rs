@@ -61,7 +61,7 @@ use super::{ObservableItemsTransaction, rfind_event_by_item_id};
 use crate::timeline::{
     BeaconInfo, EventSendState, EventTimelineItem, LiveLocationState, MsgLikeContent, MsgLikeKind,
     PollState, ReactionInfo, TimelineEventItemId, TimelineItem, TimelineItemContent,
-    event_item::beacon_info_matches,
+    event_item::{RemoteEventOrigin, beacon_info_matches},
 };
 
 #[derive(Clone)]
@@ -86,6 +86,11 @@ pub(in crate::timeline) struct PendingEdit {
 
     /// The event's `origin_server_ts` field (or creation time for a local echo).
     pub timestamp: MilliSecondsSinceUnixEpoch,
+
+    /// Where the remote edit or its bundled target entered the timeline.
+    ///
+    /// Local echoes don't have a remote origin.
+    pub origin: Option<RemoteEventOrigin>,
 
     /// The raw JSON for the edit.
     pub edit_json: Option<Raw<AnySyncTimelineEvent>>,
@@ -965,12 +970,20 @@ fn resolve_edits(aggregations: &[Aggregation], event: &mut Cow<'_, EventTimeline
                 }
 
                 TimelineEventItemId::EventId(event_id) => {
-                    let edit_key = (pending_edit.timestamp, event_id.clone());
+                    let origin_rank = match pending_edit.origin {
+                        Some(RemoteEventOrigin::Sync) => 3,
+                        Some(RemoteEventOrigin::Cache) => 2,
+                        Some(RemoteEventOrigin::Pagination) => 1,
+                        Some(RemoteEventOrigin::Unknown) | None => 0,
+                    };
+                    let edit_key = (origin_rank, pending_edit.timestamp, event_id.clone());
 
                     // Remote edits may be received or inserted out of order, especially when a
                     // focused timeline combines a target's bundled relations with context events.
                     // Select the latest edit using stable event metadata instead of its current
-                    // position in the timeline slice.
+                    // position in the timeline slice. The origin separates newer sync/cache
+                    // segments from older back-pagination before timestamps order edits within a
+                    // segment.
                     if best_edit_key.as_ref().is_none_or(|best_edit_key| &edit_key > best_edit_key)
                     {
                         best_edit = Some((pending_edit.clone(), false));
@@ -1043,7 +1056,7 @@ fn edit_item(
         return false;
     };
 
-    let PendingEdit { kind: edit_kind, timestamp: _, edit_json, encryption_info } = edit;
+    let PendingEdit { kind: edit_kind, timestamp: _, origin: _, edit_json, encryption_info } = edit;
 
     match (edit_kind, content) {
         (

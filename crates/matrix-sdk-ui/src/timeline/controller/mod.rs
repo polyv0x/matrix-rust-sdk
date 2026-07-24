@@ -1994,12 +1994,24 @@ async fn fetch_replied_to_event<P: RoomDataProvider>(
     drop(state_guard);
 
     trace!("Fetching replied-to event");
-    let res = match room.load_or_fetch_event(in_reply_to, None).await {
-        Ok(timeline_event) => {
+    let res = match room
+        .load_or_fetch_event_with_relations(
+            in_reply_to,
+            Some(vec![RelationType::Replacement]),
+            None,
+        )
+        .await
+    {
+        Ok((timeline_event, relations)) => {
             let state = state_lock.read().await;
 
-            let replied_to_item =
-                EmbeddedEvent::try_from_timeline_event(timeline_event, room, &state.meta).await?;
+            let replied_to_item = EmbeddedEvent::try_from_timeline_event_with_relations(
+                timeline_event,
+                relations,
+                room,
+                &state.meta,
+            )
+            .await?;
 
             if let Some(item) = replied_to_item {
                 TimelineDetails::Ready(Box::new(item))

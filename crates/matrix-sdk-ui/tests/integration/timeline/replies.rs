@@ -4,7 +4,10 @@ use assert_matches::assert_matches;
 use assert_matches2::assert_let;
 use eyeball_im::VectorDiff;
 use futures_util::StreamExt;
-use matrix_sdk::{assert_let_timeout, test_utils::mocks::MatrixMockServer};
+use matrix_sdk::{
+    assert_let_timeout,
+    test_utils::mocks::{MatrixMockServer, RoomRelationsResponseTemplate},
+};
 use matrix_sdk_base::timeout::timeout;
 use matrix_sdk_test::{
     ALICE, BOB, CAROL, JoinedRoomBuilder, async_test, event_factory::EventFactory,
@@ -16,7 +19,7 @@ use matrix_sdk_ui::timeline::{
 use ruma::{
     MilliSecondsSinceUnixEpoch, UInt, event_id,
     events::{
-        Mentions,
+        AnyTimelineEvent, Mentions,
         reaction::RedactedReactionEventContent,
         room::{
             ImageInfo,
@@ -28,6 +31,7 @@ use ruma::{
         sticker::{StickerEventContent, StickerMediaSource},
     },
     owned_event_id, owned_mxc_uri, room_id,
+    serde::Raw,
 };
 use serde_json::json;
 use stream_assert::{assert_next_matches, assert_pending};
@@ -235,6 +239,100 @@ async fn test_in_reply_to_details() {
 
         assert_pending!(timeline_stream);
     }
+}
+
+#[async_test]
+async fn test_fetched_in_reply_to_details_apply_latest_edit() {
+    let server = MatrixMockServer::new().await;
+    let client = server.client_builder().build().await;
+
+    let room_id = room_id!("!a98sd12bjh:example.org");
+    let room = server.sync_joined_room(&client, room_id).await;
+
+    server.mock_room_state_encryption().plain().mount().await;
+
+    let timeline = room.timeline().await.unwrap();
+    let (_, mut timeline_stream) = timeline.subscribe().await;
+
+    let original_event_id = event_id!("$original");
+    let reply_event_id = event_id!("$reply");
+    let older_edit_event_id = event_id!("$older-edit");
+    let latest_edit_event_id = event_id!("$latest-edit");
+    let f = EventFactory::new().room(room_id);
+
+    server
+        .mock_room_event()
+        .match_event_id()
+        .ok(f
+            .text_msg("before edit")
+            .sender(*ALICE)
+            .event_id(original_event_id)
+            .server_ts(MilliSecondsSinceUnixEpoch(UInt::new(1).unwrap()))
+            .into())
+        .mock_once()
+        .mount()
+        .await;
+
+    let older_edit = f
+        .text_msg("* intermediate edit")
+        .sender(*ALICE)
+        .event_id(older_edit_event_id)
+        .server_ts(MilliSecondsSinceUnixEpoch(UInt::new(2).unwrap()))
+        .edit(
+            original_event_id,
+            RoomMessageEventContentWithoutRelation::text_plain("intermediate edit"),
+        )
+        .into_raw_timeline();
+    let latest_edit = f
+        .text_msg("* after edit")
+        .sender(*ALICE)
+        .event_id(latest_edit_event_id)
+        .server_ts(MilliSecondsSinceUnixEpoch(UInt::new(3).unwrap()))
+        .edit(original_event_id, RoomMessageEventContentWithoutRelation::text_plain("after edit"))
+        .into_raw_timeline();
+    server
+        .mock_room_relations()
+        .match_target_event(original_event_id.to_owned())
+        .match_limit(256)
+        .ok(RoomRelationsResponseTemplate::default()
+            .events(Vec::<Raw<AnyTimelineEvent>>::from([latest_edit, older_edit])))
+        .mock_once()
+        .mount()
+        .await;
+
+    server
+        .sync_room(
+            &client,
+            JoinedRoomBuilder::new(room_id).add_timeline_event(
+                f.text_msg("reply")
+                    .reply_to(original_event_id)
+                    .sender(*BOB)
+                    .event_id(reply_event_id),
+            ),
+        )
+        .await;
+
+    assert_let_timeout!(Some(timeline_updates) = timeline_stream.next());
+    assert_eq!(timeline_updates.len(), 2);
+    assert_let!(VectorDiff::PushBack { value: reply } = &timeline_updates[0]);
+    assert_matches!(
+        reply.as_event().unwrap().content().as_msglike().unwrap().in_reply_to,
+        Some(ref in_reply_to) if matches!(in_reply_to.event, TimelineDetails::Unavailable)
+    );
+
+    timeline.fetch_details_for_event(reply_event_id).await.unwrap();
+
+    assert_let_timeout!(Some(timeline_updates) = timeline_stream.next());
+    assert_eq!(timeline_updates.len(), 2);
+    assert_let!(VectorDiff::Set { value: reply, .. } = &timeline_updates[1]);
+    let in_reply_to =
+        reply.as_event().unwrap().content().as_msglike().unwrap().in_reply_to.as_ref().unwrap();
+    assert_let!(TimelineDetails::Ready(replied_to) = &in_reply_to.event);
+    let message = replied_to.content.as_message().unwrap();
+    assert_eq!(message.body(), "after edit");
+    assert!(message.is_edited());
+
+    assert_pending!(timeline_stream);
 }
 
 #[async_test]
