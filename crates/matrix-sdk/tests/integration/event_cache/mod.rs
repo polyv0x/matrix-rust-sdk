@@ -287,7 +287,7 @@ async fn test_backpaginate_once() {
     };
 
     // I'll get all the previous events, in "reverse" order (same as the response).
-    let BackPaginationOutcome { events, reached_start } = outcome;
+    let BackPaginationOutcome { events, reached_start, .. } = outcome;
 
     // The event cache figures this is the last chunk of events in the room, because
     // there's no prior gap this time.
@@ -730,7 +730,7 @@ async fn test_backpaginating_without_token() {
 
     // If we try to back-paginate with a token, it will hit the end of the timeline
     // and give us the resulting event.
-    let BackPaginationOutcome { events, reached_start } =
+    let BackPaginationOutcome { events, reached_start, .. } =
         pagination.run_backwards_once(20).await.unwrap();
 
     assert!(reached_start);
@@ -790,7 +790,7 @@ async fn test_limited_timeline_resets_pagination() {
 
     // If we try to back-paginate with a token, it will hit the end of the timeline
     // and give us the resulting event.
-    let BackPaginationOutcome { events, reached_start } =
+    let BackPaginationOutcome { events, reached_start, .. } =
         pagination.run_backwards_once(20).await.unwrap();
 
     assert_eq!(events.len(), 1);

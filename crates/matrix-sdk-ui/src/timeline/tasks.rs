@@ -20,7 +20,7 @@ use eyeball::Subscriber as EyeballSubscriber;
 use matrix_sdk::{
     event_cache::{
         EventFocusThreadMode, EventFocusedCache, EventsOrigin, PinnedEventsCache, RoomEventCache,
-        RoomEventCacheUpdate, Subscriber, ThreadEventCache, ThreadEventCacheUpdate,
+        RoomEventCacheUpdate, Subscriber, ThreadEventCache, ThreadEventCacheUpdate, PaginationUpdateId,
         TimelineVectorDiffs,
     },
     send_queue::RoomSendQueueUpdate,
@@ -36,6 +36,15 @@ use crate::timeline::{
     TimelineController, TimelineFocus, controller::ActiveCallInfo, event_item::RemoteEventOrigin,
     traits::RoomDataProvider,
 };
+
+fn timeline_origin(origin: EventsOrigin) -> (RemoteEventOrigin, Option<PaginationUpdateId>) {
+    match origin {
+        EventsOrigin::Sync => (RemoteEventOrigin::Sync, None),
+        EventsOrigin::Pagination(update_id) => (RemoteEventOrigin::Pagination, Some(update_id)),
+        EventsOrigin::Cache => (RemoteEventOrigin::Cache, None),
+        EventsOrigin::CachePagination(update_id) => (RemoteEventOrigin::Cache, Some(update_id)),
+    }
+}
 
 /// Long-lived task, in the pinned events focus mode, that updates the timeline
 /// after any changes in the pinned events.
@@ -82,11 +91,7 @@ pub(in crate::timeline) async fn pinned_events_task(
         };
 
         trace!("Received new timeline events diffs");
-        let origin = match update.origin {
-            EventsOrigin::Sync => RemoteEventOrigin::Sync,
-            EventsOrigin::Pagination => RemoteEventOrigin::Pagination,
-            EventsOrigin::Cache => RemoteEventOrigin::Cache,
-        };
+        let (origin, _) = timeline_origin(update.origin);
         timeline_controller.handle_remote_events_with_diffs(update.diffs, origin).await;
     }
 }
@@ -134,12 +139,11 @@ pub(in crate::timeline) async fn event_focused_task(
         };
 
         trace!("Received new timeline events diffs");
-        let origin = match update.origin {
-            EventsOrigin::Sync => RemoteEventOrigin::Sync,
-            EventsOrigin::Pagination => RemoteEventOrigin::Pagination,
-            EventsOrigin::Cache => RemoteEventOrigin::Cache,
-        };
+        let (origin, pagination_update_id) = timeline_origin(update.origin);
         timeline_controller.handle_remote_events_with_diffs(update.diffs, origin).await;
+        if let Some(update_id) = pagination_update_id {
+            timeline_controller.mark_pagination_update_applied(update_id);
+        }
     }
 }
 
@@ -174,15 +178,14 @@ pub(in crate::timeline) async fn thread_updates_task(
             ThreadEventCacheUpdate::UpdateTimelineEvents(TimelineVectorDiffs { diffs, origin }) => {
                 trace!("Received new timeline events diffs");
 
-                let origin = match origin {
-                    EventsOrigin::Sync => RemoteEventOrigin::Sync,
-                    EventsOrigin::Pagination => RemoteEventOrigin::Pagination,
-                    EventsOrigin::Cache => RemoteEventOrigin::Cache,
-                };
+                let (origin, pagination_update_id) = timeline_origin(origin);
 
                 let has_diffs = !diffs.is_empty();
 
                 timeline_controller.handle_remote_events_with_diffs(diffs, origin).await;
+                if let Some(update_id) = pagination_update_id {
+                    timeline_controller.mark_pagination_update_applied(update_id);
+                }
 
                 if has_diffs && matches!(origin, RemoteEventOrigin::Cache) {
                     timeline_controller.retry_event_decryption(None).await;
@@ -250,16 +253,18 @@ pub(in crate::timeline) async fn room_event_cache_updates_task(
 
             RoomEventCacheUpdate::UpdateTimelineEvents(TimelineVectorDiffs { diffs, origin }) => {
                 trace!("Received new timeline events diffs");
-                let origin = match origin {
-                    EventsOrigin::Sync => RemoteEventOrigin::Sync,
-                    EventsOrigin::Pagination => RemoteEventOrigin::Pagination,
-                    EventsOrigin::Cache => RemoteEventOrigin::Cache,
-                };
+                let (origin, pagination_update_id) = timeline_origin(origin);
 
                 let has_diffs = !diffs.is_empty();
 
                 if matches!(timeline_focus, TimelineFocus::Live { .. }) {
                     timeline_controller.handle_remote_events_with_diffs(diffs, origin).await;
+                if let Some(update_id) = pagination_update_id {
+                    timeline_controller.mark_pagination_update_applied(update_id);
+                }
+                    if let Some(update_id) = pagination_update_id {
+                        timeline_controller.mark_pagination_update_applied(update_id);
+                    }
                 } else if matches!(timeline_focus, TimelineFocus::Event { .. }) {
                     // Only handle the remote aggregation for an event-focused timeline.
                     timeline_controller.handle_remote_aggregations(diffs, origin).await;

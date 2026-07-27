@@ -157,6 +157,40 @@ async fn test_back_pagination() {
 }
 
 #[async_test]
+async fn test_non_empty_back_pagination_is_applied_before_returning() {
+    let room_id = room_id!("!a98sd12bjh:example.org");
+    let server = MatrixMockServer::new().await;
+    let client = server.client_builder().build().await;
+    client.event_cache().subscribe().unwrap();
+
+    let room = server
+        .sync_room(
+            &client,
+            JoinedRoomBuilder::new(room_id)
+                .set_timeline_limited()
+                .set_timeline_prev_batch("previous-batch"),
+        )
+        .await;
+    let timeline = room.timeline().await.unwrap();
+    assert!(timeline.items().await.is_empty());
+
+    let _mock = server
+        .mock_room_messages()
+        .match_from("previous-batch")
+        .respond_with(ResponseTemplate::new(200).set_body_json(&*ROOM_MESSAGES_BATCH_1))
+        .mock_once()
+        .named("messages_batch_1")
+        .mount_as_scoped()
+        .await;
+
+    let hit_start = timeline.paginate_backwards(10).await.unwrap();
+
+    assert!(!hit_start);
+    let items = timeline.items().await;
+    assert_eq!(items.iter().filter(|item| item.as_event().is_some()).count(), 3);
+}
+
+#[async_test]
 async fn test_skip_count_is_taken_into_account_in_pagination_status() {
     let server = MatrixMockServer::new().await;
     let client = server.client_builder().build().await;

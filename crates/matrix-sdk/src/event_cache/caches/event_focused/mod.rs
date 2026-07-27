@@ -46,7 +46,7 @@ use tracing::{instrument, trace};
 use super::super::redecryptor::{MaybeResolvedEvent, TryResolveEvents};
 use super::{
     super::{
-        EventCacheError, EventsOrigin, Result, RoomEventCacheLinkedChunkUpdate,
+        EventCacheError, EventsOrigin, PaginationUpdateId, Result, RoomEventCacheLinkedChunkUpdate,
         states::{
             CacheStateLock, ReloadPreprocessing, StateLock, selectors::EventFocusedStateSelector,
         },
@@ -393,7 +393,7 @@ impl EventFocusedCacheState {
         self.chunk.push_backwards_pagination_events(Some(gap_id), new_gap, &events);
 
         self.propagate_changes();
-        self.notify_subscribers(EventsOrigin::Pagination);
+        self.notify_subscribers(EventsOrigin::Pagination(PaginationUpdateId::new()));
 
         Ok(PaginationResult { events, hit_end_of_timeline: hit_end })
     }
@@ -501,7 +501,7 @@ impl EventFocusedCacheState {
         self.chunk.push_forwards_pagination_events(Some(gap_id), new_gap, &events);
 
         self.propagate_changes();
-        self.notify_subscribers(EventsOrigin::Pagination);
+        self.notify_subscribers(EventsOrigin::Pagination(PaginationUpdateId::new()));
 
         Ok(PaginationResult { events, hit_end_of_timeline: hit_end })
     }

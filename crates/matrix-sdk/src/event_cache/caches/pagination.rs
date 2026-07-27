@@ -28,7 +28,7 @@ use matrix_sdk_base::{
 use matrix_sdk_common::executor::spawn;
 use tracing::{debug, instrument, trace, warn};
 
-use super::super::Result;
+use super::super::{PaginationUpdateId, Result};
 
 /// Type to run paginations.
 #[derive(Clone, Debug)]
@@ -63,15 +63,18 @@ where
         num_requested_events: u16,
     ) -> Result<BackPaginationOutcome> {
         let mut events = Vec::new();
+        let mut update_ids = Vec::new();
 
         loop {
             if let Some(outcome) = self.run_backwards_impl(num_requested_events).await? {
                 events.extend(outcome.events);
+                update_ids.extend(outcome.update_ids);
 
                 if outcome.reached_start || events.len() >= num_requested_events as usize {
                     return Ok(BackPaginationOutcome {
                         reached_start: outcome.reached_start,
                         events,
+                        update_ids,
                     });
                 }
 
@@ -131,6 +134,7 @@ where
                     return Either::Left(ready(Ok(Some(BackPaginationOutcome {
                         reached_start: true,
                         events: Vec::new(),
+                        update_ids: Vec::new(),
                     }))));
                 }
             }
@@ -254,7 +258,11 @@ where
                 }
 
                 LoadMoreEventsBackwardsOutcome::StartOfTimeline => {
-                    return Ok(Some(BackPaginationOutcome { reached_start: true, events: vec![] }));
+                    return Ok(Some(BackPaginationOutcome {
+                        reached_start: true,
+                        events: vec![],
+                        update_ids: vec![],
+                    }));
                 }
 
                 LoadMoreEventsBackwardsOutcome::Events {
@@ -293,6 +301,7 @@ where
             return Ok(Some(BackPaginationOutcome {
                 reached_start: false,
                 events: Default::default(),
+                update_ids: Default::default(),
             }));
         };
 
@@ -423,6 +432,9 @@ pub struct BackPaginationOutcome {
     /// if present, is the most "recent" event from the chunk (or
     /// technically, the last one in the topological ordering).
     pub events: Vec<Event>,
+
+    /// Event-cache updates produced by this pagination after it changed stored events.
+    pub update_ids: Vec<PaginationUpdateId>,
 }
 
 /// Internal type to represent the output of
