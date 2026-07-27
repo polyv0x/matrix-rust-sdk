@@ -26,7 +26,7 @@ use tracing::{error, trace};
 use super::{
     super::{
         super::{
-            EventCacheError, EventsOrigin, Result, TimelineVectorDiffs,
+            EventCacheError, EventsOrigin, PaginationUpdateId, Result, TimelineVectorDiffs,
             deduplicator::{DeduplicationOutcome, filter_duplicate_events},
         },
         pagination::{
@@ -259,18 +259,26 @@ impl PaginatedCache for ThreadEventCacheWrapper {
         timeline_event_diffs: Vec<VectorDiff<Event>>,
         reached_start: bool,
     ) -> BackPaginationOutcome {
-        if !timeline_event_diffs.is_empty() {
+        let update_ids = if timeline_event_diffs.is_empty() {
+            Vec::new()
+        } else {
+            let update_id = PaginationUpdateId::new();
             self.cache.update_sender.send(
-                TimelineVectorDiffs { diffs: timeline_event_diffs, origin: EventsOrigin::Cache },
+                TimelineVectorDiffs {
+                    diffs: timeline_event_diffs,
+                    origin: EventsOrigin::CachePagination(update_id),
+                },
                 Some(RoomEventCacheGenericUpdate { room_id: self.cache.room_id.clone() }),
             );
-        }
+            vec![update_id]
+        };
 
         BackPaginationOutcome {
             reached_start,
             // This is a backwards pagination. `BackPaginationOutcome` expects events to
             // be in “reverse order”.
             events: events.into_iter().rev().collect(),
+            update_ids,
         }
     }
 
@@ -381,17 +389,21 @@ impl PaginatedCache for ThreadEventCacheWrapper {
         // Notify observers about the updates.
         let timeline_event_diffs = state.thread_linked_chunk_mut().updates_as_vector_diffs();
 
-        if !timeline_event_diffs.is_empty() {
+        let update_ids = if timeline_event_diffs.is_empty() {
+            Vec::new()
+        } else {
+            let update_id = PaginationUpdateId::new();
             state.update_sender.send(
                 TimelineVectorDiffs {
                     diffs: timeline_event_diffs,
-                    origin: EventsOrigin::Pagination,
+                    origin: EventsOrigin::Pagination(update_id),
                 },
                 Some(RoomEventCacheGenericUpdate { room_id: state.room_id.clone() }),
             );
-        }
+            vec![update_id]
+        };
 
-        Ok(Some(BackPaginationOutcome { reached_start, events }))
+        Ok(Some(BackPaginationOutcome { reached_start, events, update_ids }))
     }
 }
 

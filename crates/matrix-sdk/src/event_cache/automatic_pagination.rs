@@ -228,7 +228,7 @@ mod tests {
         );
         assert_eq!(update.diffs.len(), 1);
 
-        assert_matches!(update.origin, EventsOrigin::Pagination);
+        assert_matches!(update.origin, EventsOrigin::Pagination(_));
 
         let mut room_events = room_events.into();
         for diff in update.diffs {
@@ -310,7 +310,7 @@ mod tests {
         );
         assert_eq!(update.diffs.len(), 1);
 
-        assert_matches!(update.origin, EventsOrigin::Pagination);
+        assert_matches!(update.origin, EventsOrigin::Pagination(_));
 
         let mut room_events = room_events.into();
         for diff in update.diffs {

@@ -39,7 +39,7 @@ pub use super::super::pagination::PaginationStatus;
 use super::{
     super::{
         super::{
-            EventCacheError, EventsOrigin, Result, RoomEventCacheGenericUpdate,
+            EventCacheError, EventsOrigin, PaginationUpdateId, Result, RoomEventCacheGenericUpdate,
             deduplicator::{DeduplicationOutcome, filter_duplicate_events},
         },
         TimelineVectorDiffs,
@@ -309,21 +309,26 @@ impl PaginatedCache for Arc<RoomEventCacheInner> {
         timeline_event_diffs: Vec<VectorDiff<Event>>,
         reached_start: bool,
     ) -> BackPaginationOutcome {
-        if !timeline_event_diffs.is_empty() {
+        let update_ids = if timeline_event_diffs.is_empty() {
+            Vec::new()
+        } else {
+            let update_id = PaginationUpdateId::new();
             self.update_sender.send(
                 RoomEventCacheUpdate::UpdateTimelineEvents(TimelineVectorDiffs {
                     diffs: timeline_event_diffs,
-                    origin: EventsOrigin::Cache,
+                    origin: EventsOrigin::CachePagination(update_id),
                 }),
                 Some(RoomEventCacheGenericUpdate { room_id: self.room_id.clone() }),
             );
-        }
+            vec![update_id]
+        };
 
         BackPaginationOutcome {
             reached_start,
             // This is a backwards pagination. `BackPaginationOutcome` expects events to
             // be in “reverse order”.
             events: events.into_iter().rev().collect(),
+            update_ids,
         }
     }
 
@@ -421,17 +426,21 @@ impl PaginatedCache for Arc<RoomEventCacheInner> {
 
         let timeline_event_diffs = state.room_linked_chunk_mut().updates_as_vector_diffs();
 
-        if !timeline_event_diffs.is_empty() {
+        let update_ids = if timeline_event_diffs.is_empty() {
+            Vec::new()
+        } else {
+            let update_id = PaginationUpdateId::new();
             self.update_sender.send(
                 RoomEventCacheUpdate::UpdateTimelineEvents(TimelineVectorDiffs {
                     diffs: timeline_event_diffs,
-                    origin: EventsOrigin::Pagination,
+                    origin: EventsOrigin::Pagination(update_id),
                 }),
                 Some(RoomEventCacheGenericUpdate { room_id: self.room_id.clone() }),
             );
-        }
+            vec![update_id]
+        };
 
-        Ok(Some(BackPaginationOutcome { events, reached_start }))
+        Ok(Some(BackPaginationOutcome { events, reached_start, update_ids }))
     }
 }
 

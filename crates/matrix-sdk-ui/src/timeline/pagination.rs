@@ -16,7 +16,7 @@ use async_rx::StreamExt as _;
 use async_stream::stream;
 use futures_core::Stream;
 use futures_util::{StreamExt as _, pin_mut};
-use matrix_sdk::event_cache::{PaginationStatus, RoomPagination};
+use matrix_sdk::event_cache::{PaginationStatus, PaginationUpdateId, RoomPagination};
 use tracing::instrument;
 
 use super::Error;
@@ -28,7 +28,9 @@ impl super::Timeline {
     /// Returns whether we hit the start of the timeline.
     #[instrument(skip_all, fields(room_id = ?self.room().room_id()))]
     pub async fn paginate_backwards(&self, mut num_events: u16) -> Result<bool, Error> {
-        match self.controller.focus() {
+        let pagination_updates = self.controller.subscribe_to_pagination_updates();
+
+        let (hit_boundary, update_ids) = match self.controller.focus() {
             TimelineFocusKind::Live { event_cache, .. } => {
                 match self.controller.live_lazy_paginate_backwards(num_events).await {
                     Some(needed_num_events) => {
@@ -47,21 +49,26 @@ impl super::Timeline {
                     }
                 }
 
-                Ok(self.live_paginate_backwards(&event_cache.pagination(), num_events).await?)
+                self.live_paginate_backwards(&event_cache.pagination(), num_events).await?
             }
 
             TimelineFocusKind::Event { event_cache, .. } => {
-                Ok(event_cache.paginate_backwards(num_events).await?.hit_end_of_timeline)
+                return Ok(event_cache.paginate_backwards(num_events).await?.hit_end_of_timeline);
             }
 
-            TimelineFocusKind::Thread { event_cache, .. } => Ok(event_cache
-                .pagination()
-                .run_backwards_once(num_events)
-                .await
-                .map(|outcome| outcome.reached_start)?),
+            TimelineFocusKind::Thread { event_cache, .. } => {
+                let outcome = event_cache.pagination().run_backwards_once(num_events).await?;
+                (outcome.reached_start, outcome.update_ids)
+            }
 
-            TimelineFocusKind::PinnedEvents { .. } => Err(Error::PaginationError(NotSupported)),
-        }
+            TimelineFocusKind::PinnedEvents { .. } => {
+                return Err(Error::PaginationError(NotSupported));
+            }
+        };
+
+        self.controller.wait_for_pagination_updates(&update_ids, pagination_updates).await;
+
+        Ok(hit_boundary)
     }
 
     /// Add more events to the end of the timeline.
@@ -71,7 +78,6 @@ impl super::Timeline {
     pub async fn paginate_forwards(&self, num_events: u16) -> Result<bool, Error> {
         match self.controller.focus() {
             TimelineFocusKind::Live { .. } => Ok(true),
-
             TimelineFocusKind::Event { event_cache, .. } => {
                 Ok(event_cache.paginate_forwards(num_events).await?.hit_end_of_timeline)
             }
@@ -92,17 +98,21 @@ impl super::Timeline {
         &self,
         event_cache_pagination: &RoomPagination,
         batch_size: u16,
-    ) -> Result<bool, Error> {
+    ) -> Result<(bool, Vec<PaginationUpdateId>), Error> {
+        let mut update_ids = Vec::new();
+
         loop {
             match event_cache_pagination.run_backwards_once(batch_size).await {
                 Ok(outcome) => {
+                    update_ids.extend(outcome.update_ids);
+
                     if outcome.reached_start {
                         self.controller.insert_timeline_start_if_missing().await;
-                        return Ok(true);
+                        return Ok((true, update_ids));
                     }
 
                     if !outcome.events.is_empty() {
-                        return Ok(false);
+                        return Ok((false, update_ids));
                     }
 
                     // Fallthrough: as a special contract, restart pagination,

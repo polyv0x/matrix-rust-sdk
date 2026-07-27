@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap, HashSet as StdHashSet},
     fmt,
     ops::Deref,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use as_variant::as_variant;
@@ -27,8 +27,9 @@ use imbl::{HashSet, Vector};
 use matrix_sdk::{
     deserialized_responses::TimelineEvent,
     event_cache::{
-        DecryptionRetryRequest, EventCache, EventFocusedCache, PaginationStatus, PinnedEventsCache,
-        RoomEventCache, Subscriber as EventCacheSubscriber, ThreadEventCache, TimelineVectorDiffs,
+        DecryptionRetryRequest, EventCache, EventFocusedCache, PaginationStatus,
+        PaginationUpdateId, PinnedEventsCache, RoomEventCache, Subscriber as EventCacheSubscriber,
+        ThreadEventCache, TimelineVectorDiffs,
     },
     send_queue::{
         LocalEcho, LocalEchoContent, RoomSendQueueUpdate, SendHandle, SendReactionHandle,
@@ -53,7 +54,7 @@ use ruma::{
     room_version_rules::RoomVersionRules,
     serde::Raw,
 };
-use tokio::sync::{RwLock, RwLockWriteGuard};
+use tokio::sync::{RwLock, RwLockWriteGuard, mpsc};
 use tracing::{
     Instrument as _, Span, debug, error, field::debug, info, info_span, instrument, trace, warn,
 };
@@ -201,6 +202,67 @@ impl TimelineFocusKind {
     }
 }
 
+#[derive(Debug, Default)]
+struct PaginationUpdateSubscribers {
+    next_id: u64,
+    subscribers: HashMap<u64, mpsc::UnboundedSender<PaginationUpdateId>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct PaginationUpdateNotifier {
+    subscribers: Arc<Mutex<PaginationUpdateSubscribers>>,
+}
+
+impl PaginationUpdateNotifier {
+    fn subscribe(&self) -> PaginationUpdateSubscription {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let mut subscribers =
+            self.subscribers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = subscribers.next_id;
+        subscribers.next_id = subscribers.next_id.wrapping_add(1);
+        subscribers.subscribers.insert(id, sender);
+        drop(subscribers);
+
+        PaginationUpdateSubscription { id, receiver, subscribers: self.subscribers.clone() }
+    }
+
+    fn notify_applied(&self, update_id: PaginationUpdateId) {
+        let mut subscribers =
+            self.subscribers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        subscribers.subscribers.retain(|_, subscriber| subscriber.send(update_id).is_ok());
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct PaginationUpdateSubscription {
+    id: u64,
+    receiver: mpsc::UnboundedReceiver<PaginationUpdateId>,
+    subscribers: Arc<Mutex<PaginationUpdateSubscribers>>,
+}
+
+impl PaginationUpdateSubscription {
+    async fn wait_for(mut self, expected_update_ids: &[PaginationUpdateId]) {
+        let mut pending = expected_update_ids.iter().copied().collect::<StdHashSet<_>>();
+
+        while !pending.is_empty() {
+            let Some(applied_update_id) = self.receiver.recv().await else {
+                return;
+            };
+            pending.remove(&applied_update_id);
+        }
+    }
+}
+
+impl Drop for PaginationUpdateSubscription {
+    fn drop(&mut self) {
+        self.subscribers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .subscribers
+            .remove(&self.id);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct TimelineController<P: RoomDataProvider = Room> {
     /// Inner mutable state.
@@ -208,6 +270,9 @@ pub(super) struct TimelineController<P: RoomDataProvider = Room> {
 
     /// Focus data.
     focus: Arc<TimelineFocusKind>,
+
+    /// Notifies pagination callers after their event-cache update is applied to `state`.
+    pagination_updates: PaginationUpdateNotifier,
 
     /// A [`RoomDataProvider`] implementation, providing data.
     ///
@@ -442,7 +507,13 @@ impl<P: RoomDataProvider> TimelineController<P> {
             None,
         )));
 
-        Ok(Self { state, focus, room_data_provider, settings })
+        Ok(Self {
+            state,
+            focus,
+            pagination_updates: PaginationUpdateNotifier::default(),
+            room_data_provider,
+            settings,
+        })
     }
 
     /// Listens to encryption state changes for the room in
@@ -497,6 +568,25 @@ impl<P: RoomDataProvider> TimelineController<P> {
         state.meta.subscriber_skip_count.update(count, is_live_timeline);
 
         needs
+    }
+
+    /// Subscribe to pagination batches applied to this timeline.
+    pub(super) fn subscribe_to_pagination_updates(&self) -> PaginationUpdateSubscription {
+        self.pagination_updates.subscribe()
+    }
+
+    /// Acknowledge that an event-cache pagination update was applied to timeline state.
+    pub(super) fn mark_pagination_update_applied(&self, update_id: PaginationUpdateId) {
+        self.pagination_updates.notify_applied(update_id);
+    }
+
+    /// Wait until the matching event-cache pagination update has been applied.
+    pub(super) async fn wait_for_pagination_updates(
+        &self,
+        update_ids: &[PaginationUpdateId],
+        updates: PaginationUpdateSubscription,
+    ) {
+        updates.wait_for(update_ids).await;
     }
 
     /// Is this timeline receiving events from sync (aka has a live focus)?

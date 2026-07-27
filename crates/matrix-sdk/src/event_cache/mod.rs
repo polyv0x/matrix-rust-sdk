@@ -31,7 +31,10 @@ use std::{
     collections::HashMap,
     fmt,
     ops::Deref,
-    sync::{Arc, OnceLock, RwLock as StdRwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{
+        Arc, OnceLock, RwLock as StdRwLock, RwLockReadGuard, RwLockWriteGuard,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use matrix_sdk_base::{
@@ -774,14 +777,28 @@ impl EventCacheInner {
     }
 }
 
+/// Identifies the event-cache update produced by one pagination batch.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PaginationUpdateId(u64);
+
+impl PaginationUpdateId {
+    fn new() -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// Indicate where events are coming from.
 #[derive(Debug, Clone)]
 pub enum EventsOrigin {
     /// Events are coming from a sync.
     Sync,
 
-    /// Events are coming from pagination.
-    Pagination,
+    /// Events are coming from network pagination.
+    Pagination(PaginationUpdateId),
+
+    /// Events are coming from pagination fulfilled by the local cache.
+    CachePagination(PaginationUpdateId),
 
     /// The cause of the change is purely internal to the cache.
     Cache,
