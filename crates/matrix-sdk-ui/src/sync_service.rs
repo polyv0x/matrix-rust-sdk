@@ -38,6 +38,7 @@ use matrix_sdk::{
     executor::{JoinHandle, spawn},
     sleep::sleep,
 };
+use ruma::events::StateEventType;
 use thiserror::Error;
 use tokio::sync::{
     Mutex as AsyncMutex, OwnedMutexGuard,
@@ -785,6 +786,9 @@ pub struct SyncServiceBuilder {
     /// [`room_list_service::DEFAULT_LIST_TIMELINE_LIMIT`].
     room_list_timeline_limit: u32,
 
+    /// State requested in addition to the room-list service defaults.
+    room_list_additional_required_state: Vec<(StateEventType, String)>,
+
     /// The parent tracing span to use for the tasks within this service.
     ///
     /// Normally this will be [`Span::none`], but it may be useful to assign a
@@ -801,6 +805,7 @@ impl SyncServiceBuilder {
             with_share_pos: true,
             room_list_conn_id: DEFAULT_CONNECTION_ID.to_owned(),
             room_list_timeline_limit: DEFAULT_LIST_TIMELINE_LIMIT,
+            room_list_additional_required_state: Vec::new(),
             parent_span: Span::none(),
         }
     }
@@ -834,6 +839,19 @@ impl SyncServiceBuilder {
         self
     }
 
+    /// Request state in addition to the room-list service defaults.
+    ///
+    /// The additional state is requested both by the room list and by explicit
+    /// room subscriptions. Duplicate `(event type, state key)` pairs are
+    /// ignored.
+    pub fn with_room_list_additional_required_state(
+        mut self,
+        required_state: impl IntoIterator<Item = (StateEventType, String)>,
+    ) -> Self {
+        self.room_list_additional_required_state.extend(required_state);
+        self
+    }
+
     /// Set the parent tracing span to be used for the tasks within this
     /// service.
     pub fn with_parent_span(mut self, parent_span: Span) -> Self {
@@ -853,16 +871,18 @@ impl SyncServiceBuilder {
             with_share_pos,
             room_list_conn_id,
             room_list_timeline_limit,
+            room_list_additional_required_state,
             parent_span,
         } = self;
 
         let encryption_sync_permit = Arc::new(AsyncMutex::new(EncryptionSyncPermit::new()));
 
-        let room_list = RoomListService::new_with(
+        let room_list = RoomListService::new_with_additional_required_state(
             client.clone(),
             with_share_pos,
             &room_list_conn_id,
             room_list_timeline_limit,
+            room_list_additional_required_state,
         )
         .await?;
 
