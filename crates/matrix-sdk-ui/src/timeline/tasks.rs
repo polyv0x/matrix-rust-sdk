@@ -19,9 +19,9 @@ use std::collections::BTreeSet;
 use eyeball::Subscriber as EyeballSubscriber;
 use matrix_sdk::{
     event_cache::{
-        EventFocusThreadMode, EventFocusedCache, EventsOrigin, PinnedEventsCache, RoomEventCache,
-        RoomEventCacheUpdate, Subscriber, ThreadEventCache, ThreadEventCacheUpdate, PaginationUpdateId,
-        TimelineVectorDiffs,
+        EventFocusThreadMode, EventFocusedCache, EventsOrigin, PaginationUpdateId,
+        PinnedEventsCache, RoomEventCache, RoomEventCacheUpdate, Subscriber, ThreadEventCache,
+        ThreadEventCacheUpdate, TimelineVectorDiffs,
     },
     send_queue::RoomSendQueueUpdate,
 };
@@ -259,9 +259,6 @@ pub(in crate::timeline) async fn room_event_cache_updates_task(
 
                 if matches!(timeline_focus, TimelineFocus::Live { .. }) {
                     timeline_controller.handle_remote_events_with_diffs(diffs, origin).await;
-                if let Some(update_id) = pagination_update_id {
-                    timeline_controller.mark_pagination_update_applied(update_id);
-                }
                     if let Some(update_id) = pagination_update_id {
                         timeline_controller.mark_pagination_update_applied(update_id);
                     }

@@ -433,7 +433,8 @@ pub struct BackPaginationOutcome {
     /// technically, the last one in the topological ordering).
     pub events: Vec<Event>,
 
-    /// Event-cache updates produced by this pagination after it changed stored events.
+    /// Event-cache updates produced by this pagination after it changed stored
+    /// events.
     pub update_ids: Vec<PaginationUpdateId>,
 }
 

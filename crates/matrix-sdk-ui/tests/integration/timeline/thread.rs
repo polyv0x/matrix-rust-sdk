@@ -172,6 +172,17 @@ async fn test_thread_backpagination() {
     // We start a first pagination.
     timeline.paginate_backwards(20).await.unwrap();
 
+    // Pagination returns only once the controller has applied the thread events.
+    assert_eq!(
+        timeline
+            .items()
+            .await
+            .iter()
+            .filter_map(|item| item.as_event()?.event_id().map(ToOwned::to_owned))
+            .collect::<Vec<_>>(),
+        [owned_event_id!("$3"), owned_event_id!("$4")]
+    );
+
     // We receive the two events from the first batch, plus a date divider.
     assert_let_timeout!(Some(timeline_updates) = timeline_stream.next());
     assert_eq!(timeline_updates.len(), 3);
@@ -196,6 +207,22 @@ async fn test_thread_backpagination() {
 
     let hit_start = timeline.paginate_backwards(100).await.unwrap();
     assert!(hit_start);
+
+    assert_eq!(
+        timeline
+            .items()
+            .await
+            .iter()
+            .filter_map(|item| item.as_event()?.event_id().map(ToOwned::to_owned))
+            .collect::<Vec<_>>(),
+        [
+            thread_root_event_id.clone(),
+            owned_event_id!("$1"),
+            owned_event_id!("$2"),
+            owned_event_id!("$3"),
+            owned_event_id!("$4"),
+        ]
+    );
 
     assert_let_timeout!(Some(timeline_updates) = timeline_stream.next());
 

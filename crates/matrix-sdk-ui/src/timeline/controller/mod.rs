@@ -28,9 +28,9 @@ use imbl::{HashSet, Vector};
 use matrix_sdk::{
     deserialized_responses::TimelineEvent,
     event_cache::{
-        DecryptionRetryRequest, EventCache, EventFocusedCache, PaginationStatus, PinnedEventsCache,
-        RoomEventCache, Subscriber as EventCacheSubscriber, ThreadEventCache,
-        ThreadEventCacheUpdate, PaginationUpdateId, TimelineVectorDiffs,
+        DecryptionRetryRequest, EventCache, EventFocusedCache, PaginationStatus,
+        PaginationUpdateId, PinnedEventsCache, RoomEventCache, Subscriber as EventCacheSubscriber,
+        ThreadEventCache, ThreadEventCacheUpdate,
     },
     send_queue::{
         LocalEcho, LocalEchoContent, RoomSendQueueUpdate, SendHandle, SendReactionHandle,
@@ -282,7 +282,8 @@ pub(super) struct TimelineController<P: RoomDataProvider = Room> {
     /// Focus data.
     focus: Arc<TimelineFocusKind>,
 
-    /// Notifies pagination callers after their event-cache update is applied to `state`.
+    /// Notifies pagination callers after their event-cache update is applied to
+    /// `state`.
     pagination_updates: PaginationUpdateNotifier,
 
     /// A [`RoomDataProvider`] implementation, providing data.
@@ -586,7 +587,8 @@ impl<P: RoomDataProvider> TimelineController<P> {
         self.pagination_updates.subscribe()
     }
 
-    /// Acknowledge that an event-cache pagination update was applied to timeline state.
+    /// Acknowledge that an event-cache pagination update was applied to
+    /// timeline state.
     pub(super) fn mark_pagination_update_applied(&self, update_id: PaginationUpdateId) {
         self.pagination_updates.notify_applied(update_id);
     }

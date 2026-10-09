@@ -264,7 +264,8 @@ async fn test_relations_edit_overrides_pending_edit_msg() {
     assert_pending!(stream);
 
     // Now we receive the original event, with a bundled relations group.
-    // Both edits have the same timestamp, so their event IDs provide the stable tie-breaker.
+    // Both edits have the same timestamp, so their event IDs provide the stable
+    // tie-breaker.
     let ev = f
         .text_msg("original")
         .sender(*ALICE)
@@ -312,8 +313,9 @@ async fn test_bundled_edit_is_not_overridden_by_an_older_later_inserted_edit() {
     let older_edit_event_id = event_id!("$older_edit");
     let bundled_edit_event_id = event_id!("$bundled_edit");
 
-    // A focused timeline can receive the target, including its latest bundled edit, before an
-    // older standalone edit that appears later in the context response.
+    // A focused timeline can receive the target, including its latest bundled edit,
+    // before an older standalone edit that appears later in the context
+    // response.
     timeline
         .handle_live_event(
             f.text_msg("original")

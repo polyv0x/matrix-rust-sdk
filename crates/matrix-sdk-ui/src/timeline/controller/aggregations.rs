@@ -84,7 +84,8 @@ pub(in crate::timeline) struct PendingEdit {
     /// The kind of edit this is.
     pub kind: PendingEditKind,
 
-    /// The event's `origin_server_ts` field (or creation time for a local echo).
+    /// The event's `origin_server_ts` field (or creation time for a local
+    /// echo).
     pub timestamp: MilliSecondsSinceUnixEpoch,
 
     /// Where the remote edit or its bundled target entered the timeline.

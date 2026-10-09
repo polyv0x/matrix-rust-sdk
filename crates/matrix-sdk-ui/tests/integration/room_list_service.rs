@@ -49,6 +49,115 @@ async fn new_persistent_room_list_service(
     Ok((server, room_list))
 }
 
+#[async_test]
+async fn test_additional_required_state_is_requested_and_refreshed() {
+    use matrix_sdk_base::deserialized_responses::RawAnySyncOrStrippedState;
+    use matrix_sdk_ui::sync_service::SyncService;
+    use ruma::events::StateEventType;
+    use serde_json::{Value, json};
+    use wiremock::{Match as _, Mock, Request, ResponseTemplate};
+
+    use crate::sliding_sync::SlidingSyncMatcher;
+
+    const BANNER: &str = "page.codeberg.everypizza.room.banner";
+    let space_id = room_id!("!space:example.org");
+    let server = MatrixMockServer::new().await;
+    let client = server.client_builder().build().await;
+    let service = SyncService::builder(client.clone())
+        .with_room_list_additional_required_state([
+            (StateEventType::from(BANNER), String::new()),
+            (StateEventType::from(BANNER), String::new()),
+            (StateEventType::RoomName, String::new()),
+        ])
+        .build()
+        .await
+        .unwrap();
+    let room_list = service.room_list_service();
+    let sync = room_list.sync();
+    pin_mut!(sync);
+
+    for (round, content) in [
+        json!({ "url": "mxc://example.org/first" }),
+        json!({ "url": "mxc://example.org/updated" }),
+        json!({}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        match round {
+            1 => room_list.set_room_subscriptions(&[space_id]).await,
+            2 => room_list.reset_and_add_room_subscriptions(&[space_id]).await,
+            _ => {}
+        }
+
+        let response_content = content.clone();
+        let _mock = Mock::given(SlidingSyncMatcher)
+            .respond_with(move |request: &Request| {
+                let request: Value = request.body_json().unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "txn_id": request["txn_id"],
+                    "pos": round.to_string(),
+                    "lists": { ALL_ROOMS: { "count": 1 } },
+                    "rooms": {
+                        space_id: {
+                            "initial": round == 0,
+                            "required_state": [{
+                                "type": BANNER,
+                                "state_key": "",
+                                "event_id": format!("$banner{round}"),
+                                "sender": "@alice:example.org",
+                                "origin_server_ts": round + 1,
+                                "content": response_content,
+                            }],
+                        },
+                    },
+                }))
+            })
+            .expect(1)
+            .mount_as_scoped(&server)
+            .await;
+
+        tokio::time::timeout(Duration::from_secs(5), sync.next())
+            .await
+            .expect("sync completed")
+            .expect("sync stream is open")
+            .expect("sync succeeded");
+
+        let requests = server.received_requests().await.unwrap();
+        let request: Value = requests
+            .iter()
+            .rev()
+            .find(|request| SlidingSyncMatcher.matches(request))
+            .unwrap()
+            .body_json()
+            .unwrap();
+        let required_state = if round == 0 {
+            &request["lists"][ALL_ROOMS]["required_state"]
+        } else {
+            &request["room_subscriptions"][space_id.as_str()]["required_state"]
+        }
+        .as_array()
+        .expect("required state is sent for the list and both subscription APIs");
+        for event_type in [BANNER, "m.room.name"] {
+            assert_eq!(
+                required_state.iter().filter(|pair| **pair == json!([event_type, ""])).count(),
+                1,
+                "{event_type} must be requested exactly once"
+            );
+        }
+        if round > 0 {
+            assert!(required_state.contains(&json!(["m.room.pinned_events", ""])));
+        }
+
+        let room = client.get_room(space_id).unwrap();
+        let state = room.get_state_event(StateEventType::from(BANNER), "").await.unwrap().unwrap();
+        let RawAnySyncOrStrippedState::Sync(state) = state else {
+            panic!("expected joined room state");
+        };
+        assert_eq!(state.get_field::<Value>("content").unwrap(), Some(content));
+    }
+}
+
 // Same macro as in the main, with additional checking that the state
 // before/after the sync loop match those we expect.
 macro_rules! sync_then_assert_request_and_fake_response {

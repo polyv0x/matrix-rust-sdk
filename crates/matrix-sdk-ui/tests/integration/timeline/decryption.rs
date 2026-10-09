@@ -16,6 +16,7 @@ use std::io::Write;
 
 use assert_matches::assert_matches;
 use eyeball_im::VectorDiff;
+use futures_util::StreamExt as _;
 use matrix_sdk::{
     assert_next_matches_with_timeout,
     linked_chunk::{ChunkIdentifier, LinkedChunkId, Position, Update},
@@ -313,6 +314,11 @@ async fn test_an_utd_from_the_event_cache_as_a_paginated_item_is_decrypted() {
     // The stream is pending, because, well, everything is alright so far!
     assert_pending!(updates_stream);
 
+    // Pagination waits for the timeline to apply cached events, so the start
+    // marker, cached event and decryption can arrive in the same batch. Verify
+    // every diff in order without relying on task scheduling between batches.
+    let mut updates_stream = updates_stream.flat_map(futures_util::stream::iter);
+
     // Now we can paginate to load the UTD!
     let reached_start = timeline.paginate_backwards(1).await.unwrap();
 
@@ -320,29 +326,27 @@ async fn test_an_utd_from_the_event_cache_as_a_paginated_item_is_decrypted() {
     // let's test everything :-).
     assert!(reached_start);
 
-    assert_next_matches_with_timeout!(updates_stream, 250, updates => {
-        assert_eq!(updates.len(), 1, "We get the start of timeline item");
-
-        assert_matches!(&updates[0], VectorDiff::PushFront { value } => {
+    assert_next_matches_with_timeout!(updates_stream, 250, update => {
+        assert_matches!(update, VectorDiff::PushFront { value } => {
             assert!(value.is_timeline_start());
         });
     });
 
     // Now, let's look at the updates. We must observe an update reflecting the UTD
     // has entered the `Timeline`.
-    assert_next_matches_with_timeout!(updates_stream, 250, updates => {
-        assert_eq!(updates.len(), 2, "Expecting 2 updates from the `Timeline`");
-
+    assert_next_matches_with_timeout!(updates_stream, 250, update => {
         // UTD! UTD!
-        assert_matches!(&updates[0], VectorDiff::Insert { index: 2, value: event } => {
+        assert_matches!(update, VectorDiff::Insert { index: 2, value: event } => {
             assert_matches!(event.as_event(), Some(event) => {
                 assert_eq!(event.event_id().unwrap().as_str(), "$ev0");
                 assert!(event.content().is_unable_to_decrypt());
             });
         });
+    });
 
+    assert_next_matches_with_timeout!(updates_stream, 250, update => {
         // UTD is decrypted now!
-        assert_matches!(&updates[1], VectorDiff::Set { index: 2, value: event } => {
+        assert_matches!(update, VectorDiff::Set { index: 2, value: event } => {
             assert_matches!(event.as_event(), Some(event) => {
                 assert_eq!(event.event_id().unwrap().as_str(), "$ev0");
                 assert_matches!(event.content().as_message(), Some(message) => {

@@ -593,7 +593,9 @@ impl RoomListService {
     }
 }
 
-fn room_subscription_settings(additional_required_state: &[(StateEventType, String)]) -> http::request::RoomSubscription {
+fn room_subscription_settings(
+    additional_required_state: &[(StateEventType, String)],
+) -> http::request::RoomSubscription {
     assign!(http::request::RoomSubscription::default(), {
         required_state: required_state_with_additions(additional_required_state, true),
         timeline_limit: UInt::from(DEFAULT_ROOM_SUBSCRIPTION_TIMELINE_LIMIT),

@@ -775,6 +775,7 @@ mod tests {
         let f = EventFactory::new().room(room).sender(*BOB);
         let outcome = BackPaginationOutcome {
             reached_start: false,
+            update_ids: Vec::new(),
             events: vec![
                 f.text_msg("a").event_id(event_id!("$1")).into_event(),
                 f.text_msg("b").event_id(event_id!("$2")).into_event(),
