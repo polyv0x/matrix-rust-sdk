@@ -330,7 +330,13 @@ pub(super) mod test {
                             ResponseTemplate::new(200)
                                 .append_header("X-Max-Bytes", "10240")
                                 .append_header("ETag", "1")
-                                .append_header("Expires", "Wed, 07 Sep 2022 14:28:51 GMT")
+                                .append_header(
+                                    "Expires",
+                                    ruma::http_headers::system_time_to_http_date(
+                                        &(ruma::time::SystemTime::now() + Duration::from_secs(300)),
+                                    )
+                                    .expect("valid expiry"),
+                                )
                                 .append_header("Last-Modified", "Wed, 07 Sep 2022 14:27:51 GMT")
                                 .set_body_json(json!({
                                     "url": rendezvous_url,
@@ -361,7 +367,13 @@ pub(super) mod test {
 
                             ResponseTemplate::new(200)
                                 .append_header("ETag", (current_etag + 2).to_string())
-                                .append_header("Expires", "Wed, 07 Sep 2022 14:28:51 GMT")
+                                .append_header(
+                                    "Expires",
+                                    ruma::http_headers::system_time_to_http_date(
+                                        &(ruma::time::SystemTime::now() + Duration::from_secs(300)),
+                                    )
+                                    .expect("valid expiry"),
+                                )
                                 .append_header("Last-Modified", "Wed, 07 Sep 2022 14:27:51 GMT")
                         }
                     }),
@@ -397,7 +409,14 @@ pub(super) mod test {
 
                                 ResponseTemplate::new(200)
                                     .append_header("ETag", (current_etag).to_string())
-                                    .append_header("Expires", "Wed, 07 Sep 2022 14:28:51 GMT")
+                                    .append_header(
+                                        "Expires",
+                                        ruma::http_headers::system_time_to_http_date(
+                                            &(ruma::time::SystemTime::now()
+                                                + Duration::from_secs(300)),
+                                        )
+                                        .expect("valid expiry"),
+                                    )
                                     .append_header("Last-Modified", "Wed, 07 Sep 2022 14:27:51 GMT")
                                     .set_body_string(content.unwrap_or_default())
                             } else {
@@ -405,7 +424,14 @@ pub(super) mod test {
 
                                 ResponseTemplate::new(304)
                                     .append_header("ETag", etag.to_string())
-                                    .append_header("Expires", "Wed, 07 Sep 2022 14:28:51 GMT")
+                                    .append_header(
+                                        "Expires",
+                                        ruma::http_headers::system_time_to_http_date(
+                                            &(ruma::time::SystemTime::now()
+                                                + Duration::from_secs(300)),
+                                        )
+                                        .expect("valid expiry"),
+                                    )
                                     .append_header("Last-Modified", "Wed, 07 Sep 2022 14:27:51 GMT")
                             }
                         }

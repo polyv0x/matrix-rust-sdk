@@ -64,6 +64,10 @@ pub type RumaApiError = UiaaResponse;
 /// converting the raw HTTP response into a Matrix response.
 #[derive(Error, Debug)]
 pub enum HttpError {
+    /// The local lifetime of a QR login rendezvous channel has elapsed.
+    #[error("The QR login rendezvous channel has expired")]
+    RendezvousExpired,
+
     /// Error at the HTTP layer.
     #[error(transparent)]
     Reqwest(#[from] ReqwestError),
